@@ -1,0 +1,158 @@
+---
+title: "R Notebook"
+author: "Dixitha Kasturi"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r ,results='hide'}
+library(tidyverse) # for multiple functions and operations
+library(Hmisc) # for describe function
+```
+
+
+```{r}
+setwd('C:/Users/kastu/Desktop/Syracuse/Spring22/IST707-AML/Week3/Assignment3')
+bank <- read_csv('bankdata_csv_all.csv')
+
+str(bank)
+describe(bank)
+
+```
+
+__Despite the formatting not being the way we would want it to. There are no missing values in any of the columns. So there is no data cleaning__
+__a) Each ID is distinct, so removing it would make best sense.__
+__b) Age and income are continuous variables, if stored precisely. Here despite having discrete values for age we still consider it continuous, we further want to put the values into bins or properly discretize them for easy understanding of the age and income levels and rules.__
+__c)sex(2),region(4),married(2), children(4),car(2),save_act(2),current_act(2),mortgage(2), pep(2), all have distinct values as mentioned in the brackets. This shows the repetitions in values. Factorizing it would make better sense and would be easier to generate rules as association rules work better on factor data__
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Data transformation:
+
+bank <- bank%>% select_if(!names(.) %in% c('id')) #removing id column
+
+#Discretizing age and income
+#using mutate for age
+bank <- bank %>% mutate( age_levels = case_when( 1<= age & age<= 10~ "Kids",
+                                            11<=age & age<=19~ "Teens",
+                                            20<=age & age<=29 ~ "Twenties",
+                                            30<=age & age<=39 ~ "Thirties",
+                                            40<=age & age<=49 ~ "Forties",
+                                            50<=age & age<=59 ~ "Fifties",
+                                            60<=age & age<= 69 ~ "Sixties"
+                                                         
+))
+
+#using cut,
+
+min <- min(bank$income)
+max <- max(bank$income)
+bins<- seq(min, max,(max -min)/5)
+bank$income_levels <- cut(bank$income,breaks =bins , labels = c("i1","i2","i3","i4","i5"))
+
+
+#converting varibales into factors:
+bank$sex <- as.factor(bank$sex )
+bank$region <- as.factor(bank$region)
+bank$married  <- as.factor(bank$married)
+bank$children  <- as.factor(bank$children)
+bank$car <- as.factor(bank$car)
+bank$save_act <- as.factor(bank$save_act)
+bank$current_act <- as.factor(bank$current_act)
+bank$mortgage <- as.factor(bank$mortgage)
+bank$pep <- as.factor(bank$pep)
+bank$age_levels <- as.factor(bank$age_levels)
+```
+
+
+```{r}
+library(arules)
+library(arulesViz)
+
+
+bank_transactions <- as(select(bank, col = -c('age','income')),"transactions")
+rules <- apriori(bank_transactions, parameter = list(supp = 0.13, conf = 0.8, minlen = 2))
+sorted_rules <- sort(rules,  by="confidence", decreasing=TRUE)
+inspect(sorted_rules)
+
+
+```
+
+__* Support 0.01 and conf - 0.8 gave us to many rules to inspect__
+__* Support pt 0.1 and confidence = 0.8 gave us 95 rules. Having low support or confidence values generated way too many rules.__
+__* People with no children and mortgage ,have no pep and either have current account or savings or neither, are likely to be married. So plans should be suggested accordingly to them.__
+
+```{r}
+summary(rules)
+```
+
+```{r}
+pep_yes_rules <- apriori(bank_transactions, 
+             parameter=list(supp=0.08, conf=0.60,minlen = 3), 
+             control=list(verbose=F),
+             appearance=list(default="lhs",rhs= c("pep=YES")))
+
+sorted_pep_yes_rules <- sort(pep_yes_rules,by = "lift",descending = TRUE)
+inspect(sorted_pep_yes_rules)
+
+```
+
+
+
+
+__After adjusting the support and confidence levels, support = 0.08 and confidence  = 0.6 gave some good results to understand__ 
+
+
+__Rule 2: {married=YES,children=1,save_act=YES} =>  {pep=YES} :__
+__This rule appears 9.5% frequently in our data.People who have one children, a savings account and are married are 87.69% likely to buy the PEP.The lift of 1.92 suggests that People who have one children, a savings account and are married buy pep more than the expected value. This suggests that targeting such clients would result in increase in pep sales.__
+
+
+__Rule 3 : {children=1,  save_act=YES, mortgage=NO} => {pep=YES} :__
+__This rule appears 8% frequently in our data.People who have one children, a savings account and have no mortgage are 87.27% likely to buy the PEP.The lift of 1.91 suggests that People who have one children, a savings account and have no mortgage buy pep more than the expected value. This suggests that targeting such clients would result in increase in pep sales.__
+__A similar rule of {children=1,  save_act=YES, current_act=NO} => {pep=YES}, this category of people were 10.5% frequent with a likelihood of 86.3% with overall account of  63( from the 600 observations)__
+
+__Rules 16,17,18,19:__
+__{married=NO,save_act=YES,current_act=YES,mortgage=NO} => {pep = YES} : support = 8.8%  confidence = 75.7% lift = 1.65 count= 53__
+__{married=NO,save_act=YES,mortgage=NO} => {pep = YES} support = 10.67%  confidence = 74.42% lift= 1.63    count =64__ 
+__{married=NO,current_act=YES,mortgage=NO} => {pep = YES} support = 12.17%  confidence = 71.6% lift =  1.57   count = 73__
+__{married=NO,mortgage=NO} => {pep = YES} support = 15.3%  confidence = 70.76% lift = 1.55 count=    92__
+
+__All 4 of these rules had closer numbers with 2 conditions in common, the person not being married and having no mortage, in addition to this, if the person had savings account, current account or both, was highly likely in buying or signing up for pep. So when a new client has the above mentioned qualities, pep should be suggested to them and they will most likely get it.__
+
+__A general observation from all rules is that people with children are more likely to have pep and there is one case where the people who are not married and have no children would get pep, this could be because single people are making investments as they might not have a lot of financial responsibilities at the moment and are looking at gaining profits through their investment.__
+
+
+
+```{r}
+
+pep_no_rules <- apriori(bank_transactions, 
+             parameter=list(supp=0.1, conf=0.80,minlen = 3), 
+             control=list(verbose=F),
+             appearance=list(default="lhs",rhs= c("pep=NO")))
+
+sorted_pep_no_rules <- sort(pep_no_rules,by = "lift",descending = TRUE)
+
+inspect(sorted_pep_no_rules)
+
+```
+
+
+__After adjusting the support and confidence levels, support = 0.1 and confidence  = 0.8 gave some good results to understand. On the contrary the people who didnot get pep are:__
+
+__{married=YES,children=0,save_act=YES,current_act=YES} => {pep=NO} support = 13.33%  confidence = 91.95%  lift= 1.692405   count = 80__
+__{married=YES,children=0,save_act=YES,mortgage=NO} => {pep=NO} support= 12.16%  confidence = 91.25% lift= 1.679448   count = 73__
+__{married=YES,children=0,current_act=YES, mortgage = NO} => {pep=NO} support = 13.33% confidence = 90.9% lift = 1.673173   count =  80__
+
+__People who are married, have savings or current account or both , have no mortgage and have no children all have more or less close likeliness(around 91%) of not getting pep. Such customers, should not be sent a followup email and some other plans should be suggested instead.__
+
+__Another observation was, females with no children but who are married are less likely to get the pep plan. So people with no children should can be safely avoided as potential buyers of pep plan.__
